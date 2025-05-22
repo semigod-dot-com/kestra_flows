@@ -1,0 +1,71 @@
+id: homework-gcp
+namespace: zoomcamp
+
+tasks:
+  - id: extract_postgres
+    type: io.kestra.plugin.jdbc.postgresql.CopyOut
+    sql: |
+      SELECT * FROM green_tripdata 
+      limit 300000
+
+  - id: move_to_gcs
+    type: io.kestra.plugin.gcp.gcs.Upload
+    from: "{{ outputs.extract_postgres.uri }}"
+    to: "gs://{{kv('GCP_BUCKET_NAME')}}/green_tripdata.csv"
+
+  - id: bq_green_tripdata
+    type: io.kestra.plugin.gcp.bigquery.Query
+    sql: |
+      CREATE TABLE IF NOT EXISTS `{{kv('GCP_PROJECT_ID')}}.{{kv('GCP_DATASET')}}.green_tripdata`
+      (
+        VendorID INT64,
+        lpep_pickup_datetime TIMESTAMP,
+        lpep_dropoff_datetime TIMESTAMP,
+        store_and_fwd_flag STRING,
+        RatecodeID INT64,
+        PULocationID INT64,
+        DOLocationID INT64,
+        passenger_count INT64,
+        trip_distance FLOAT64,
+        fare_amount FLOAT64,
+        extra FLOAT64,
+        mta_tax FLOAT64,
+        tip_amount FLOAT64,
+        tolls_amount FLOAT64,
+        ehail_fee STRING,
+        improvement_surcharge FLOAT64,
+        total_amount FLOAT64,
+        payment_type INT64,
+        trip_type INT64,
+        congestion_surcharge STRING
+      );
+
+
+
+  - id: load_to_bigquery
+    type: io.kestra.plugin.gcp.bigquery.LoadFromGcs
+    from:
+      - "gs://homework-flows/green_tripdata.csv"  # GCS path
+    destinationTable: "{{kv('GCP_DATASET')}}.green_tripdata"
+    writeDisposition: WRITE_TRUNCATE
+    format: CSV
+    csvOptions:
+      skipLeadingRows: 1
+      fieldDelimiter: "\t"
+
+
+
+
+pluginDefaults:
+  - type: io.kestra.plugin.jdbc.postgresql
+    values:
+      url: jdbc:postgresql://host.docker.internal:5432/postgres-flows
+      username: semigod
+      password: k3str4
+
+  - type: io.kestra.plugin.gcp
+    values:
+      serviceAccount: "{{kv('kestra-shitbox')}}"
+      projectId: "{{kv('GCP_PROJECT_ID')}}"
+      location: "{{kv('GCP_LOCATION')}}"
+      bucket: "{{kv('GCP_BUCKET_NAME')}}"
