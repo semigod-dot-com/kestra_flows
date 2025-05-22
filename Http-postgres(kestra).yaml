@@ -1,0 +1,224 @@
+id: homework
+namespace: zoomcamp
+
+concurrency:
+  limit: 1
+
+inputs:
+  - id: taxi
+    type: SELECT
+    displayName: Select taxi type
+    values: [yellow, green]
+    defaults: yellow
+
+  - id: year
+    type: SELECT
+    displayName: Select year
+    values: ["2019", "2020", "2021"]
+    defaults: "2019"
+
+  - id: month
+    type: SELECT
+    displayName: Select month
+    values: ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
+    defaults: "01"
+
+variables:
+  file: "{{inputs.taxi}}_tripdata_{{inputs.year}}-{{inputs.month}}.csv"
+  staging_table: "public.{{inputs.taxi}}_tripdata_staging"
+  table: "public.{{inputs.taxi}}_tripdata"
+  data: "{{outputs.extract.outputFiles[inputs.taxi ~ '_tripdata_' ~ inputs.year ~ '-' ~ inputs.month ~ '.csv']}}"
+
+tasks:
+  - id: extract
+    type: io.kestra.plugin.scripts.shell.Commands
+    outputFiles:
+      - "*.csv"
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - wget -qO- https://github.com/DataTalksClub/nyc-tlc-data/releases/download/{{inputs.taxi}}/{{render(vars.file)}}.gz | gunzip > {{render(vars.file)}}
+
+
+  - id: if_green_taxi
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{inputs.taxi == 'green'}}"
+    then:
+        - id: green_table
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+              CREATE TABLE IF NOT EXISTS {{render(vars.table)}} (
+                VendorID INTEGER,
+                lpep_pickup_datetime TIMESTAMP,
+                lpep_dropoff_datetime TIMESTAMP,
+                store_and_fwd_flag CHAR(1),
+                RatecodeID text,
+                PULocationID INTEGER,
+                DOLocationID INTEGER,
+                passenger_count INTEGER,
+                trip_distance FLOAT,
+                fare_amount FLOAT,
+                extra FLOAT,
+                mta_tax FLOAT,
+                tip_amount FLOAT,
+                tolls_amount FLOAT,
+                ehail_fee FLOAT,
+                improvement_surcharge FLOAT,
+                total_amount FLOAT,
+                payment_type INTEGER,
+                trip_type INTEGER,
+                congestion_surcharge FLOAT
+              );
+
+        - id: green_table_staging
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+              CREATE TABLE IF NOT EXISTS {{render(vars.staging_table)}} (
+                VendorID INTEGER,
+                lpep_pickup_datetime TIMESTAMP,
+                lpep_dropoff_datetime TIMESTAMP,
+                store_and_fwd_flag CHAR(1),
+                RatecodeID text,
+                PULocationID INTEGER,
+                DOLocationID INTEGER,
+                passenger_count INTEGER,
+                trip_distance FLOAT,
+                fare_amount FLOAT,
+                extra FLOAT,
+                mta_tax FLOAT,
+                tip_amount FLOAT,
+                tolls_amount FLOAT,
+                ehail_fee FLOAT,
+                improvement_surcharge FLOAT,
+                total_amount FLOAT,
+                payment_type INTEGER,
+                trip_type INTEGER,
+                congestion_surcharge FLOAT
+                );
+
+        - id: green_copy_in_to_staging_table
+          type: io.kestra.plugin.jdbc.postgresql.CopyIn
+          format: CSV
+          from: "{{render(vars.data)}}"
+          table: "{{render(vars.staging_table)}}"
+          delimiter: ","
+          header: true
+
+        - id: delete_existing_month
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+            DELETE FROM {{ render(vars.table) }}
+            WHERE DATE_TRUNC('month', lpep_pickup_datetime) = TO_DATE('{{inputs.year}}-{{inputs.month}}', 'YYYY-MM');
+
+
+        - id: insert_final_green
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+            INSERT INTO {{ render(vars.table) }}
+            SELECT * FROM {{ render(vars.staging_table) }};
+
+        - id: green_truncate_staging_table
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+            TRUNCATE TABLE {{render(vars.staging_table)}};
+
+  - id: if_yellow_taxi
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{inputs.taxi == 'yellow'}}"
+    then:
+        - id: yellow_table
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+              CREATE TABLE IF NOT EXISTS {{render(vars.table)}} (
+                vendorid TEXT,
+                tpep_pickup_datetime TEXT,
+                tpep_dropoff_datetime TEXT,
+                passenger_count TEXT,
+                trip_distance TEXT,
+                ratecodeid TEXT,
+                store_and_fwd_flag TEXT,
+                pulocationid TEXT,
+                dolocationid TEXT,
+                payment_type TEXT,
+                fare_amount TEXT,
+                extra TEXT,
+                mta_tax TEXT,
+                tip_amount TEXT,
+                tolls_amount TEXT,
+                improvement_surcharge TEXT,
+                total_amount TEXT,
+                congestion_surcharge TEXT
+                );
+
+        - id: yellow_table_staging
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+              CREATE TABLE IF NOT EXISTS {{render(vars.staging_table)}} (
+                vendorid TEXT,
+                tpep_pickup_datetime TEXT,
+                tpep_dropoff_datetime TEXT,
+                passenger_count TEXT,
+                trip_distance TEXT,
+                ratecodeid TEXT,
+                store_and_fwd_flag TEXT,
+                pulocationid TEXT,
+                dolocationid TEXT,
+                payment_type TEXT,
+                fare_amount TEXT,
+                extra TEXT,
+                mta_tax TEXT,
+                tip_amount TEXT,
+                tolls_amount TEXT,
+                improvement_surcharge TEXT,
+                total_amount TEXT,
+                congestion_surcharge TEXT
+                );
+
+        - id: yellow_copy_in_to_staging_table
+          type: io.kestra.plugin.jdbc.postgresql.CopyIn
+          format: CSV
+          from: "{{render(vars.data)}}"
+          table: "{{render(vars.staging_table)}}"
+          delimiter: ","
+          header: true
+
+        - id: delete_existing_month_yellow
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+            DELETE FROM {{ render(vars.table) }}
+            WHERE DATE_TRUNC('month', tpep_pickup_datetime) = TO_DATE('{{inputs.year}}-{{inputs.month}}', 'YYYY-MM');
+
+        - id: insert_final_yellow
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+            INSERT INTO {{ render(vars.table) }}
+            SELECT * FROM {{ render(vars.staging_table) }};
+
+        - id: yellow_truncate_staging_table
+          type: io.kestra.plugin.jdbc.postgresql.Queries
+          sql: |
+            TRUNCATE TABLE {{render(vars.staging_table)}};
+
+  - id: purge_files
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles
+
+
+pluginDefaults:
+  - type: io.kestra.plugin.jdbc.postgresql
+    values:
+      url: jdbc:postgresql://host.docker.internal:5432/postgres-flows
+      username: semigod
+      password: k3str4
+
+triggers:
+  - id: green_schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 9 1 * *"
+    inputs:
+      taxi: green
+
+  - id: yellow_schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 10 1 * *"
+    inputs:
+      taxi: yellow
